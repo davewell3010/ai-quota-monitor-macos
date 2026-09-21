@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run offline tests
+        run: ./scripts/test.sh
+      - name: Type-check app sources
+        run: |
+          mkdir -p build/module-cache
+          xcrun swiftc -typecheck -swift-version 5 \
+            -module-cache-path "$PWD/build/module-cache" \
+            -framework AppKit -framework SwiftUI -framework WebKit \
+            -framework WidgetKit -framework ServiceManagement \
+            Sources/*.swift Shared/*.swift

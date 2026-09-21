@@ -344,8 +344,8 @@ struct CardView: View {
                 }
             }
             if let snapshot {
-                quotaRow(t("五小时", "Five hours"), window: snapshot.fiveHour, tint: tint, stale: error != nil)
-                quotaRow(t("本周", "This week"), window: snapshot.weekly, tint: tint, stale: error != nil)
+                quotaRow(t("五小时", "Five hours"), window: snapshot.fiveHour, tint: tint, stale: error != nil, isWeekly: false)
+                quotaRow(t("本周", "This week"), window: snapshot.weekly, tint: tint, stale: error != nil, isWeekly: true)
                 if let error {
                     Text(error + t(" 当前保留的是上次成功数据。", " Showing the last successful data."))
                         .font(.system(size: 10)).foregroundStyle(.orange).lineLimit(2)
@@ -375,7 +375,7 @@ struct CardView: View {
         .background(providerSurface, in: RoundedRectangle(cornerRadius: 17))
         .overlay(RoundedRectangle(cornerRadius: 17).stroke(providerBorder, lineWidth: 1))
     }
-    func quotaRow(_ label: String, window: QuotaWindow?, tint: Color, stale: Bool) -> some View {
+    func quotaRow(_ label: String, window: QuotaWindow?, tint: Color, stale: Bool, isWeekly: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -392,7 +392,7 @@ struct CardView: View {
                 HStack {
                     Text(window.map { t("剩余 \(Int($0.remaining.rounded()))%", "\(Int($0.remaining.rounded()))% left") } ?? t("暂无额度数据", "No quota data"))
                     Spacer()
-                    Text(resetLabel(window?.reset, now: context.date))
+                    Text(resetLabel(window?.reset, now: context.date, isWeekly: isWeekly))
                 }.font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }
@@ -401,13 +401,17 @@ struct CardView: View {
         let seconds = Int(now.timeIntervalSince(date))
         return seconds < 60 ? t("刚刚更新", "Updated now") : t("\(seconds / 60) 分钟前更新", "Updated \(seconds / 60)m ago")
     }
-    func resetLabel(_ date: Date?, now: Date) -> String {
+    func resetLabel(_ date: Date?, now: Date, isWeekly: Bool) -> String {
         guard let date else { return t("重置时间未知", "Reset time unknown") }
         let minutes = Int(ceil(date.timeIntervalSince(now) / 60))
         if minutes <= 0 { return t("已到重置时间 · 待同步", "Reset due · Waiting to sync") }
-        if minutes >= 1440 { return t("\(minutes / 1440) 天 \((minutes % 1440) / 60) 小时后重置", "Resets in \(minutes / 1440)d \((minutes % 1440) / 60)h") }
-        if minutes >= 60 { return t("\(minutes / 60) 小时 \(minutes % 60) 分后重置", "Resets in \(minutes / 60)h \(minutes % 60)m") }
-        return t("\(minutes) 分钟后重置", "Resets in \(minutes)m")
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: displayLanguage == AppLanguage.english.rawValue ? "en_US" : "zh_CN")
+        formatter.dateFormat = isWeekly ? (displayLanguage == AppLanguage.english.rawValue ? "MMM d, HH:mm" : "M月d日 HH:mm") : "HH:mm"
+        let point = formatter.string(from: date)
+        if minutes >= 1440 { return t("\(minutes / 1440)天\((minutes % 1440) / 60)小时后重置 · \(point)", "Resets in \(minutes / 1440)d \((minutes % 1440) / 60)h · \(point)") }
+        if minutes >= 60 { return t("\(minutes / 60)小时\(minutes % 60)分后重置 · \(point)", "Resets in \(minutes / 60)h \(minutes % 60)m · \(point)") }
+        return t("\(minutes)分钟后重置 · \(point)", "Resets in \(minutes)m · \(point)")
     }
 }
 

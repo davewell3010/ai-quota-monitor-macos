@@ -78,8 +78,8 @@ struct QuotaWidgetView: View {
                 Spacer(minLength: 0)
                 if value?.failed == true { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).font(.caption2) }
             }
-            row(t("五小时", "Five hours"), value: value?.fiveHour, tint: value?.failed == true ? .gray : tint, detailed: detailed)
-            row(t("本周", "This week"), value: value?.weekly, tint: value?.failed == true ? .gray : tint, detailed: detailed)
+            row(t("五小时", "Five hours"), value: value?.fiveHour, tint: value?.failed == true ? .gray : tint, detailed: detailed, isWeekly: false)
+            row(t("本周", "This week"), value: value?.weekly, tint: value?.failed == true ? .gray : tint, detailed: detailed, isWeekly: true)
             HStack(spacing: 3) {
                 if value?.failed == true { Text(t("更新失败", "Update failed")) }
                 else { Text(t("更新于", "Updated")) }
@@ -88,7 +88,7 @@ struct QuotaWidgetView: View {
             }.font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
-    func row(_ title: String, value: WidgetQuota?, tint: Color, detailed: Bool) -> some View {
+    func row(_ title: String, value: WidgetQuota?, tint: Color, detailed: Bool, isWeekly: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title).font(.caption2).foregroundStyle(.secondary)
@@ -100,12 +100,18 @@ struct QuotaWidgetView: View {
             if detailed {
                 HStack(spacing: 3) {
                     if let date = value?.reset {
-                        if date > entry.date { Text(date, style: .relative); Text(t("后重置", "to reset")) }
+                        if date > entry.date { Text(date, style: .relative); Text(t("后重置 ·", "to reset ·")); Text(resetPoint(date, isWeekly: isWeekly)) }
                         else { Text(t("已到重置时间 · 待同步", "Reset due · Waiting to sync")) }
                     } else { Text(value == nil ? t("暂无额度数据", "No quota data") : t("重置时间未知", "Reset time unknown")) }
                 }.font(.system(size: 9)).foregroundStyle(.secondary)
             }
         }
+    }
+    func resetPoint(_ date: Date, isWeekly: Bool) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: english ? "en_US" : "zh_CN")
+        formatter.dateFormat = isWeekly ? (english ? "MMM d, HH:mm" : "M月d日 HH:mm") : "HH:mm"
+        return formatter.string(from: date)
     }
     func percent(_ value: WidgetQuota?) -> String { value.map { String(format: "%.0f%%", $0.used) } ?? "—" }
 }

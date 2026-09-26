@@ -9,6 +9,13 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum CardLayout: String, CaseIterable, Identifiable {
+    case vertical
+    case horizontal
+
+    var id: String { rawValue }
+}
+
 enum CustomThemeImageStore {
     static var imageURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -180,12 +187,16 @@ enum CardTheme: String, CaseIterable, Identifiable {
 struct CardView: View {
     @ObservedObject var store: Store
     @AppStorage("appearance") var appearance = "dark"
+    @AppStorage("cardLayout") private var cardLayout = CardLayout.vertical.rawValue
     @AppStorage("displayLanguage") private var displayLanguage = AppLanguage.simplifiedChinese.rawValue
     @AppStorage("customThemeRevision") private var customThemeRevision = 0
     @Environment(\.colorScheme) private var systemColorScheme
     @State private var customThemeImage = CustomThemeImageStore.load()
 
     private var theme: CardTheme { CardTheme(rawValue: appearance) ?? .dark }
+    private var usesHorizontalLayout: Bool {
+        cardLayout == CardLayout.horizontal.rawValue || (store.preview && CommandLine.arguments.contains("--preview-horizontal"))
+    }
     private func t(_ zh: String, _ en: String) -> String { displayLanguage == AppLanguage.english.rawValue ? en : zh }
 
     private var usesLightPalette: Bool {
@@ -308,8 +319,15 @@ struct CardView: View {
                 Button { store.refresh() } label: { Image(systemName: "arrow.clockwise") }.disabled(store.busy).help("立即刷新")
                 Button { store.showSettings.toggle() } label: { Image(systemName: "slider.horizontal.3") }.help("设置")
             }.buttonStyle(.plain)
-            provider("Codex", symbol: "terminal", tint: themeAccent, snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
-            provider("Claude", symbol: "sun.max", tint: Color(red: 0.88, green: 0.57, blue: 0.40), snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
+            if usesHorizontalLayout {
+                HStack(alignment: .top, spacing: 14) {
+                    provider("Codex", symbol: "terminal", tint: themeAccent, snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
+                    provider("Claude", symbol: "sun.max", tint: Color(red: 0.88, green: 0.57, blue: 0.40), snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
+                }
+            } else {
+                provider("Codex", symbol: "terminal", tint: themeAccent, snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
+                provider("Claude", symbol: "sun.max", tint: Color(red: 0.88, green: 0.57, blue: 0.40), snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
+            }
             HStack {
                 Circle().fill(store.busy ? .orange : themeAccent).frame(width: 5, height: 5)
                 Text(store.busy ? t("正在同步额度…", "Syncing quota…") : t("订阅额度使用率 · 非 token 数量", "Subscription usage · Not token counts")).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -317,10 +335,16 @@ struct CardView: View {
                 Button { NSApp.delegate.flatMap { $0 as? AppDelegate }?.hideCard() } label: { Image(systemName: "minus") }.buttonStyle(.plain).help("收起到菜单栏")
             }
         }
-        .padding(22).frame(width: 356)
+        .padding(22).frame(width: usesHorizontalLayout ? 680 : 356)
         .background(GeometryReader { geometry in Color.clear.preference(key: CardSizeKey.self, value: geometry.size) })
         .onPreferenceChange(CardSizeKey.self) { size in
             DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.resizeCard(size) }
+        }
+        .onAppear {
+            (NSApp.delegate as? AppDelegate)?.resizeCardWidth(usesHorizontalLayout ? 680 : 356)
+        }
+        .onChange(of: cardLayout) {
+            (NSApp.delegate as? AppDelegate)?.resizeCardWidth(usesHorizontalLayout ? 680 : 356)
         }
         .onChange(of: customThemeRevision) { customThemeImage = CustomThemeImageStore.load() }
         .background(cardSurface)
@@ -372,6 +396,7 @@ struct CardView: View {
             }
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(providerSurface, in: RoundedRectangle(cornerRadius: 17))
         .overlay(RoundedRectangle(cornerRadius: 17).stroke(providerBorder, lineWidth: 1))
     }
@@ -425,6 +450,7 @@ struct SettingsView: View {
     @AppStorage("codexPath") var codexPath = ""
     @AppStorage("customThemeRevision") var customThemeRevision = 0
     @AppStorage("displayLanguage") var displayLanguage = AppLanguage.simplifiedChinese.rawValue
+    @AppStorage("cardLayout") var cardLayout = CardLayout.vertical.rawValue
     @State var loginMessage = ""
     @State var customImageMessage = ""
     @State private var customThemeImage = CustomThemeImageStore.load()
@@ -505,6 +531,11 @@ struct SettingsView: View {
                 store.publishWidget()
                 (NSApp.delegate as? AppDelegate)?.rebuildMenu()
             }
+            Picker(t("布局方向", "Layout"), selection: $cardLayout) {
+                Label(t("竖版", "Vertical"), systemImage: "rectangle.portrait").tag(CardLayout.vertical.rawValue)
+                Label(t("横版", "Horizontal"), systemImage: "rectangle.split.2x1").tag(CardLayout.horizontal.rawValue)
+            }
+            .pickerStyle(.segmented)
             VStack(alignment: .leading, spacing: 9) {
                 Text(t("主题风格", "Theme")).font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
@@ -648,9 +679,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func resizeCard(_ size: CGSize) {
         guard let panel, size.width > 0, size.height > 0 else { return }
         let old = panel.frame
-        if abs(old.height - size.height) > 1 {
-            panel.setFrame(NSRect(x: old.minX, y: old.maxY - size.height, width: size.width, height: size.height), display: true)
+        if abs(old.width - size.width) > 1 || abs(old.height - size.height) > 1 {
+            panel.setFrame(NSRect(x: old.maxX - size.width, y: old.maxY - size.height, width: size.width, height: size.height), display: true, animate: true)
         }
+    }
+    func resizeCardWidth(_ width: CGFloat) {
+        guard let panel, width > 0, abs(panel.frame.width - width) > 1 else { return }
+        let old = panel.frame
+        panel.setFrame(NSRect(x: old.maxX - width, y: old.minY, width: width, height: old.height), display: true, animate: true)
     }
     func updateLevel() { panel.level = (UserDefaults.standard.object(forKey: "onTop") as? Bool ?? true) ? .floating : .normal }
     func rebuildMenu() {

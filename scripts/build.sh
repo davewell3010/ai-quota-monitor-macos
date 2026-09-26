@@ -16,6 +16,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIdentifier</key><string>$APP_BUNDLE_ID</string>
 <key>CFBundleName</key><string>AI额度</string>
 <key>CFBundleDisplayName</key><string>AI额度</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>1.0.0</string>
 <key>CFBundleVersion</key><string>1</string>

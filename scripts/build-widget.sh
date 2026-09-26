@@ -41,7 +41,7 @@ import os,plistlib,pathlib
 app=pathlib.Path('build/widget/AI额度.app/Contents')
 group=os.environ['APP_GROUP_ID']
 base=dict(CFBundleShortVersionString='1.1.2',CFBundleVersion='5',LSMinimumSystemVersion='14.0',AIQuotaAppGroup=group)
-main=dict(base,CFBundleExecutable='AIQuota',CFBundleIdentifier=os.environ['APP_BUNDLE_ID'],CFBundleName='AI额度',CFBundleDisplayName='AI额度',CFBundlePackageType='APPL',LSUIElement=True,NSHighResolutionCapable=True,CFBundleURLTypes=[dict(CFBundleURLName='AIQuota',CFBundleURLSchemes=['aiquota'])])
+main=dict(base,CFBundleExecutable='AIQuota',CFBundleIdentifier=os.environ['APP_BUNDLE_ID'],CFBundleName='AI额度',CFBundleDisplayName='AI额度',CFBundleIconFile='AppIcon',CFBundlePackageType='APPL',LSUIElement=True,NSHighResolutionCapable=True,CFBundleURLTypes=[dict(CFBundleURLName='AIQuota',CFBundleURLSchemes=['aiquota'])])
 
 for path,value in [(app/'Info.plist',main),(pathlib.Path('build/widget/host.entitlements'),{'com.apple.security.application-groups':[group]}),(pathlib.Path('build/widget/widget.entitlements'),{'com.apple.security.app-sandbox':True,'com.apple.security.application-groups':[group]})]:
  path.write_bytes(plistlib.dumps(value))

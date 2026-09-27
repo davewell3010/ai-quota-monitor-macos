@@ -57,10 +57,36 @@ struct QuotaParser {
 import CoreFoundation
 
 // A short-lived official app-server connection; no model turn is started.
+enum CodexExecutable {
+    static func find(preferredPath: String? = nil) -> String? {
+        let paths = [
+            preferredPath ?? "",
+            UserDefaults.standard.string(forKey: "codexPath") ?? "",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex-cli/bin/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex"
+        ]
+        for rawPath in paths {
+            let path = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty else { continue }
+            let candidates = path.hasSuffix(".app")
+                ? [path + "/Contents/Resources/codex-cli/bin/codex", path + "/Contents/MacOS/codex"]
+                : [path]
+            if let executable = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                return executable
+            }
+        }
+        return nil
+    }
+}
+
 final class CodexReader {
     static func read(executablePath: String? = nil, timeout: TimeInterval = 25) throws -> QuotaSnapshot {
-        let candidates = [executablePath ?? "", UserDefaults.standard.string(forKey: "codexPath") ?? "", "/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex", "/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
-        guard let path = candidates.first(where: { !$0.isEmpty && FileManager.default.isExecutableFile(atPath: $0) }) else {
+        guard let path = CodexExecutable.find(preferredPath: executablePath) else {
             throw QuotaError.message("未找到 Codex。请安装 Codex 或在设置里选择程序路径。")
         }
         let process = Process(), input = Pipe(), output = Pipe()

@@ -1,5 +1,14 @@
-import subprocess,json,selectors,time,os
-p=subprocess.Popen(['/Applications/ChatGPT.app/Contents/Resources/codex','app-server','--stdio'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
+import subprocess,json,selectors,time,os,shutil
+paths=[
+ '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex',
+ '/Applications/ChatGPT.app/Contents/Resources/codex',
+ '/Applications/Codex.app/Contents/Resources/codex',
+ shutil.which('codex'),
+]
+executable=next((path for path in paths if path and os.access(path,os.X_OK)),None)
+if executable is None:
+ raise SystemExit('Codex executable not found')
+p=subprocess.Popen([executable,'app-server','--stdio'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
 def send(x):
  p.stdin.write(json.dumps(x)+'\n');p.stdin.flush()
 send({'id':1,'method':'initialize','params':{'clientInfo':{'name':'ai_quota_card','version':'1.0.0'}}})

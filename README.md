@@ -10,6 +10,7 @@ A native SwiftUI/AppKit menu-bar card and WidgetKit extension for viewing Codex 
 - Floating card, menu-bar controls, and small/medium/large macOS widgets.
 - Built-in themes and local custom background images.
 - Simplified Chinese and English display languages.
+- Codex executable auto-detection, program selection, path paste/copy, and browser sign-in through the official Codex CLI.
 - Configurable refresh interval, always-on-top mode, and launch at login.
 - No project server, analytics, or manual API-key entry.
 
@@ -53,7 +54,7 @@ After launch, right-click the desktop, choose **Edit Widgets**, and search for *
 
 ## Data and privacy
 
-- **Codex:** starts the local `codex app-server --stdio` process and calls read-only `account/rateLimits/read`.
+- **Codex:** starts the local `codex app-server --stdio` process and calls read-only `account/rateLimits/read`. The **Sign in to Codex** button starts the official `codex login` browser flow and uses Codex's own local credential storage; this app does not collect or save the password or tokens.
 - **Claude:** uses a dedicated local WebKit session on the official Claude website. It does not read Safari or Chrome cookies.
 - **Widget:** receives only percentages, reset dates, timestamps, failure flags, and language through an App Group JSON snapshot.
 - **Custom themes:** images are resized and saved locally under Application Support.

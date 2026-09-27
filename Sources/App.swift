@@ -70,11 +70,14 @@ final class Store: ObservableObject {
     @Published var codexError: String?
     @Published var claudeError: String?
     @Published var codexBusy = false
+    @Published var codexLoginBusy = false
+    @Published var codexLoginError: String?
     @Published var claudeBusy = false
     @Published var showSettings = false
     @Published var widgetStatus: String?
     let web = ClaudeWeb()
     var timer: Timer?
+    private var codexLoginProcess: Process?
     var lastAttempt = Date.distantPast
     let preview = CommandLine.arguments.contains("--preview")
     var busy: Bool { codexBusy || claudeBusy }
@@ -125,6 +128,46 @@ final class Store: ObservableObject {
         guard !claudeBusy else { return }
         claudeBusy = true
         Task { await web.logout(); claude = nil; claudeError = "已退出，请重新连接 Claude。"; claudeBusy = false; publishWidget() }
+    }
+    func connectCodex() {
+        guard !codexLoginBusy else { return }
+        guard let path = CodexExecutable.find() else {
+            codexLoginError = "未找到 Codex 程序，请先选择程序路径。"
+            return
+        }
+        codexLoginError = nil
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["login"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] finished in
+            Task { @MainActor in
+                guard let self, self.codexLoginProcess === finished else { return }
+                self.codexLoginProcess = nil
+                self.codexLoginBusy = false
+                if finished.terminationStatus == 0 {
+                    self.lastAttempt = .distantPast
+                    self.refresh()
+                } else {
+                    self.codexLoginError = "Codex 登录未完成，请在浏览器中完成授权后重试。"
+                }
+            }
+        }
+        do {
+            try process.run()
+            codexLoginProcess = process
+            codexLoginBusy = true
+        } catch {
+            codexLoginError = "无法启动 Codex 登录，请检查程序路径。"
+        }
+    }
+    func cancelCodexLogin() {
+        guard let process = codexLoginProcess else { return }
+        codexLoginProcess = nil
+        codexLoginBusy = false
+        if process.isRunning { process.terminate() }
     }
 }
 
@@ -590,6 +633,28 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(t("Codex 程序路径（留空自动查找）", "Codex executable path (leave blank to detect)")).font(.caption)
                 TextField("/Applications/…/codex", text: $codexPath).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button(t("选择程序…", "Choose Program…")) { chooseCodexProgram() }
+                    Button(t("粘贴路径", "Paste Path")) { pasteCodexPath() }
+                    Button(t("复制路径", "Copy Path")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(codexPath, forType: .string) }
+                        .disabled(codexPath.isEmpty)
+                }
+                HStack {
+                    Button(store.codexLoginBusy ? t("取消登录", "Cancel Sign-In") : t("登录 Codex", "Sign in to Codex")) {
+                        if store.codexLoginBusy { store.cancelCodexLogin() }
+                        else { store.connectCodex() }
+                    }
+                    if store.codexLoginBusy {
+                        ProgressView().controlSize(.small)
+                        Text(t("请在浏览器完成登录…", "Complete sign-in in your browser…"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if let error = store.codexLoginError {
+                    Text(error).font(.caption).foregroundStyle(.orange)
+                } else if let error = store.codexError {
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Button(SMAppService.mainApp.status == .enabled ? t("关闭开机启动", "Disable Launch at Login") : t("开启开机启动", "Enable Launch at Login")) {
                 do {
@@ -627,6 +692,37 @@ struct SettingsView: View {
                 customImageMessage = t("图片读取失败，请换一张图片重试。", "Could not read this image. Please try another one.")
             }
         }
+    }
+
+    func chooseCodexProgram() {
+        let panel = NSOpenPanel()
+        panel.title = t("选择 Codex 程序", "Choose the Codex Program")
+        panel.prompt = t("选择", "Choose")
+        panel.allowsMultipleSelection = false
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.treatsFilePackagesAsDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            guard CodexExecutable.find(preferredPath: url.path) == url.path ||
+                    (url.path.hasSuffix(".app") && CodexExecutable.find(preferredPath: url.path)?.hasPrefix(url.path + "/") == true) else {
+                store.codexLoginError = t("请选择 Codex 可执行文件或 ChatGPT.app。", "Choose a Codex executable or ChatGPT.app.")
+                return
+            }
+            codexPath = url.path
+            store.codexLoginError = nil
+            store.lastAttempt = .distantPast
+            store.refresh()
+        }
+    }
+
+    func pasteCodexPath() {
+        guard let pasted = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !pasted.isEmpty else { return }
+        codexPath = pasted
+        store.codexLoginError = nil
+        store.lastAttempt = .distantPast
+        store.refresh()
     }
 }
 

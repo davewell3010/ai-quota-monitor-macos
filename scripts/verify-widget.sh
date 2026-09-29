@@ -1,13 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-APP="$PWD/build/widget/AI额度.app"
+APP="${AI_QUOTA_BUILD_ROOT:-$PWD/build/widget}/AI额度.app"
 EXT="$APP/Contents/PlugIns/AIQuotaWidget.appex"
+export APP
 codesign --verify --deep --strict "$APP"
 xcrun nm -u "$EXT/Contents/MacOS/AIQuotaWidget" | rg -q '_NSExtensionMain$'
 python3 - <<'PY'
-import plistlib,pathlib,subprocess,re
-base=pathlib.Path('build/widget/AI额度.app/Contents')
+import os,plistlib,pathlib,subprocess,re
+base=pathlib.Path(os.environ['APP'])/'Contents'
 a=plistlib.loads((base/'Info.plist').read_bytes())
 w=plistlib.loads((base/'PlugIns/AIQuotaWidget.appex/Contents/Info.plist').read_bytes())
 assert w['NSExtension']=={'NSExtensionPointIdentifier':'com.apple.widgetkit-extension'}

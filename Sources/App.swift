@@ -14,6 +14,21 @@ enum CardLayout: String, CaseIterable, Identifiable {
     case horizontal
 
     var id: String { rawValue }
+
+    static func prefersHorizontal(size: CGSize) -> Bool {
+        let verticalScale = min(size.width / 356, size.height / 620)
+        let horizontalScale = min(size.width / 680, size.height / 420)
+        return horizontalScale > verticalScale
+    }
+}
+
+enum CardResizeEdge {
+    case top, bottom, left, right, topLeft, topRight, bottomLeft, bottomRight
+
+    var left: Bool { self == .left || self == .topLeft || self == .bottomLeft }
+    var right: Bool { self == .right || self == .topRight || self == .bottomRight }
+    var top: Bool { self == .top || self == .topLeft || self == .topRight }
+    var bottom: Bool { self == .bottom || self == .bottomLeft || self == .bottomRight }
 }
 
 enum CustomThemeImageStore {
@@ -75,6 +90,8 @@ final class Store: ObservableObject {
     @Published var claudeBusy = false
     @Published var showSettings = false
     @Published var widgetStatus: String?
+    @Published var manualCardSize: CGSize?
+    @Published var resizeLayoutLock: Bool?
     let web = ClaudeWeb()
     var timer: Timer?
     private var codexLoginProcess: Process?
@@ -82,6 +99,9 @@ final class Store: ObservableObject {
     let preview = CommandLine.arguments.contains("--preview")
     var busy: Bool { codexBusy || claudeBusy }
     init() {
+        let width = UserDefaults.standard.double(forKey: "manualCardWidth")
+        let height = UserDefaults.standard.double(forKey: "manualCardHeight")
+        if width >= 300 && height >= 420 { manualCardSize = CGSize(width: width, height: height) }
         if preview {
             codex = QuotaSnapshot(fiveHour: .init(used: 24, reset: Date().addingTimeInterval(8400)), weekly: .init(used: 48, reset: Date().addingTimeInterval(210000)))
             if CommandLine.arguments.contains("--preview-claude-disconnected") {
@@ -176,8 +196,23 @@ struct CardSizeKey: PreferenceKey {
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }
 
+struct ComicPanelShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cut: CGFloat = 14
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + cut))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX + cut, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cut))
+        path.closeSubpath()
+        return path
+    }
+}
+
 enum CardTheme: String, CaseIterable, Identifiable {
-    case system, light, dark, ocean, sunset, academy, custom
+    case system, light, dark, ocean, sunset, academy, orbit, comic, custom
 
     var id: String { rawValue }
     var title: String {
@@ -188,6 +223,8 @@ enum CardTheme: String, CaseIterable, Identifiable {
         case .ocean: "海盐蓝"
         case .sunset: "暮霞紫"
         case .academy: "星辉学院"
+        case .orbit: "星轨仪表"
+        case .comic: "英雄漫画"
         case .custom: "自定义"
         }
     }
@@ -200,6 +237,8 @@ enum CardTheme: String, CaseIterable, Identifiable {
         case .ocean: "Ocean Blue"
         case .sunset: "Sunset Violet"
         case .academy: "Star Academy"
+        case .orbit: "Star Orbit"
+        case .comic: "Hero Comic"
         case .custom: "Custom"
         }
     }
@@ -211,6 +250,8 @@ enum CardTheme: String, CaseIterable, Identifiable {
         case .ocean: "water.waves"
         case .sunset: "sun.horizon.fill"
         case .academy: "sparkles"
+        case .orbit: "circle.hexagongrid"
+        case .comic: "bolt.shield.fill"
         case .custom: "photo.fill"
         }
     }
@@ -222,6 +263,8 @@ enum CardTheme: String, CaseIterable, Identifiable {
         case .ocean: [Color(red: 0.52, green: 0.86, blue: 0.95), Color(red: 0.22, green: 0.52, blue: 0.82)]
         case .sunset: [Color(red: 0.95, green: 0.48, blue: 0.40), Color(red: 0.34, green: 0.18, blue: 0.50)]
         case .academy: [Color(red: 0.93, green: 0.69, blue: 0.30), Color(red: 0.09, green: 0.17, blue: 0.38)]
+        case .orbit: [Color(red: 0.93, green: 0.72, blue: 0.40), Color(red: 0.12, green: 0.72, blue: 0.86), Color(red: 0.04, green: 0.09, blue: 0.20)]
+        case .comic: [Color(red: 0.91, green: 0.15, blue: 0.23), Color(red: 0.13, green: 0.36, blue: 0.90), Color(red: 0.08, green: 0.11, blue: 0.20)]
         case .custom: [Color(red: 0.40, green: 0.44, blue: 0.52), Color(red: 0.12, green: 0.14, blue: 0.18)]
         }
     }
@@ -235,10 +278,14 @@ struct CardView: View {
     @AppStorage("customThemeRevision") private var customThemeRevision = 0
     @Environment(\.colorScheme) private var systemColorScheme
     @State private var customThemeImage = CustomThemeImageStore.load()
+    @State private var verticalContentHeight: CGFloat = 620
+    @State private var horizontalContentHeight: CGFloat = 420
 
     private var theme: CardTheme { CardTheme(rawValue: appearance) ?? .dark }
     private var usesHorizontalLayout: Bool {
-        cardLayout == CardLayout.horizontal.rawValue || (store.preview && CommandLine.arguments.contains("--preview-horizontal"))
+        if let locked = store.resizeLayoutLock { return locked }
+        if let manualSize = store.manualCardSize, !store.preview { return CardLayout.prefersHorizontal(size: manualSize) }
+        return cardLayout == CardLayout.horizontal.rawValue || (store.preview && CommandLine.arguments.contains("--preview-horizontal"))
     }
     private func t(_ zh: String, _ en: String) -> String { displayLanguage == AppLanguage.english.rawValue ? en : zh }
 
@@ -246,7 +293,7 @@ struct CardView: View {
         switch theme {
         case .system: systemColorScheme == .light
         case .light, .ocean: true
-        case .dark, .sunset, .academy, .custom: false
+        case .dark, .sunset, .academy, .orbit, .comic, .custom: false
         }
     }
 
@@ -254,7 +301,7 @@ struct CardView: View {
         switch theme {
         case .system: nil
         case .light, .ocean: .light
-        case .dark, .sunset, .academy, .custom: .dark
+        case .dark, .sunset, .academy, .orbit, .comic, .custom: .dark
         }
     }
 
@@ -263,7 +310,8 @@ struct CardView: View {
         case .system, .light, .dark: .mint
         case .ocean: Color(red: 0.04, green: 0.52, blue: 0.78)
         case .sunset: Color(red: 1.0, green: 0.50, blue: 0.40)
-        case .academy, .custom: Color(red: 0.95, green: 0.72, blue: 0.34)
+        case .academy, .orbit, .custom: Color(red: 0.95, green: 0.72, blue: 0.34)
+        case .comic: Color(red: 1.0, green: 0.27, blue: 0.34)
         }
     }
 
@@ -287,6 +335,41 @@ struct CardView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+        case .comic:
+            ZStack {
+                LinearGradient(colors: [Color(red: 0.075, green: 0.11, blue: 0.23), Color(red: 0.025, green: 0.045, blue: 0.11)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Canvas { context, size in
+                    for x in stride(from: CGFloat(0), through: size.width, by: 18) {
+                        for y in stride(from: CGFloat(0), through: size.height, by: 18) {
+                            context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 2, height: 2)), with: .color(.white.opacity(0.075)))
+                        }
+                    }
+                }
+                .allowsHitTesting(false)
+                GeometryReader { geometry in
+                    Path { path in
+                        path.move(to: CGPoint(x: geometry.size.width * 0.72, y: 0))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: 0))
+                        path.addLine(to: CGPoint(x: geometry.size.width, y: geometry.size.height * 0.30))
+                        path.closeSubpath()
+                    }
+                    .fill(Color(red: 0.91, green: 0.15, blue: 0.23).opacity(0.24))
+                }
+                .allowsHitTesting(false)
+            }
+        case .orbit:
+            ZStack {
+                LinearGradient(colors: [Color(red: 0.025, green: 0.065, blue: 0.16), Color(red: 0.015, green: 0.035, blue: 0.085)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                GeometryReader { geometry in
+                    Image(systemName: "sparkle").font(.system(size: 12)).foregroundStyle(Color(red: 0.95, green: 0.72, blue: 0.34).opacity(0.48))
+                        .position(x: geometry.size.width * 0.79, y: 29)
+                    Image(systemName: "sparkle").font(.system(size: 7)).foregroundStyle(Color.cyan.opacity(0.44))
+                        .position(x: geometry.size.width * 0.12, y: geometry.size.height * 0.47)
+                    Image(systemName: "sparkle").font(.system(size: 9)).foregroundStyle(Color.white.opacity(0.30))
+                        .position(x: geometry.size.width * 0.87, y: geometry.size.height * 0.82)
+                }
+                .allowsHitTesting(false)
+            }
         case .academy:
             GeometryReader { geometry in
                 ZStack {
@@ -337,23 +420,26 @@ struct CardView: View {
         case .ocean: Color.white.opacity(0.62)
         case .sunset: Color.white.opacity(0.075)
         case .academy: Color(red: 0.035, green: 0.075, blue: 0.17).opacity(0.76)
+        case .orbit: Color(red: 0.04, green: 0.075, blue: 0.16).opacity(0.92)
+        case .comic: Color(red: 0.055, green: 0.085, blue: 0.18).opacity(0.94)
         case .custom: Color.black.opacity(0.68)
         default: usesLightPalette ? Color.white.opacity(0.84) : Color.primary.opacity(0.045)
         }
     }
 
     private var providerBorder: Color {
-        (theme == .academy || theme == .custom) ? themeAccent.opacity(0.24) : (usesLightPalette ? Color.black.opacity(0.055) : Color.white.opacity(0.055))
+        (theme == .academy || theme == .orbit || theme == .comic || theme == .custom) ? themeAccent.opacity(0.24) : (usesLightPalette ? Color.black.opacity(0.055) : Color.white.opacity(0.055))
     }
 
     private var progressTrack: Color {
-        (theme == .academy || theme == .custom) ? Color.white.opacity(0.16) : (usesLightPalette ? Color.black.opacity(0.075) : Color.white.opacity(0.09))
+        (theme == .academy || theme == .orbit || theme == .comic || theme == .custom) ? Color.white.opacity(0.16) : (usesLightPalette ? Color.black.opacity(0.075) : Color.white.opacity(0.09))
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
+    private var cardContents: some View {
+        VStack(alignment: .leading, spacing: theme == .orbit || theme == .comic ? 12 : 17) {
             HStack(spacing: 10) {
-                Image(systemName: "chart.bar.xaxis").font(.system(size: 20, weight: .semibold)).foregroundStyle(themeAccent)
+                Image(systemName: theme == .comic ? "bolt.shield.fill" : "chart.bar.xaxis")
+                    .font(.system(size: 20, weight: .semibold)).foregroundStyle(themeAccent)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(t("AI 额度", "AI Quota")).font(.system(size: 19, weight: .bold))
                     Text(store.preview ? t("外观预览 · 示例数据", "Theme preview · Sample data") : t("你的 AI 使用仪表盘", "Your AI usage dashboard")).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -362,7 +448,23 @@ struct CardView: View {
                 Button { store.refresh() } label: { Image(systemName: "arrow.clockwise") }.disabled(store.busy).help("立即刷新")
                 Button { store.showSettings.toggle() } label: { Image(systemName: "slider.horizontal.3") }.help("设置")
             }.buttonStyle(.plain)
-            if usesHorizontalLayout {
+            if theme == .comic && usesHorizontalLayout {
+                HStack(alignment: .top, spacing: 12) {
+                    comicProvider("Codex", symbol: "terminal", snapshot: store.codex, error: store.codexError, busy: store.codexBusy, accent: comicRed)
+                    comicProvider("Claude", symbol: "sun.max", snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy, accent: comicBlue)
+                }
+            } else if theme == .comic {
+                comicProvider("Codex", symbol: "terminal", snapshot: store.codex, error: store.codexError, busy: store.codexBusy, accent: comicRed)
+                comicProvider("Claude", symbol: "sun.max", snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy, accent: comicBlue)
+            } else if theme == .orbit && usesHorizontalLayout {
+                HStack(alignment: .top, spacing: 12) {
+                    orbitProvider("Codex", symbol: "terminal", snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
+                    orbitProvider("Claude", symbol: "sun.max", snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
+                }
+            } else if theme == .orbit {
+                orbitProvider("Codex", symbol: "terminal", snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
+                orbitProvider("Claude", symbol: "sun.max", snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
+            } else if usesHorizontalLayout {
                 HStack(alignment: .top, spacing: 14) {
                     provider("Codex", symbol: "terminal", tint: themeAccent, snapshot: store.codex, error: store.codexError, busy: store.codexBusy)
                     provider("Claude", symbol: "sun.max", tint: Color(red: 0.88, green: 0.57, blue: 0.40), snapshot: store.claude, error: store.claudeError, busy: store.claudeBusy)
@@ -378,23 +480,322 @@ struct CardView: View {
                 Button { NSApp.delegate.flatMap { $0 as? AppDelegate }?.hideCard() } label: { Image(systemName: "minus") }.buttonStyle(.plain).help("收起到菜单栏")
             }
         }
-        .padding(22).frame(width: usesHorizontalLayout ? 680 : 356)
+        .padding(theme == .orbit || theme == .comic ? 18 : 22).frame(width: usesHorizontalLayout ? 680 : 356)
+        .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { geometry in Color.clear.preference(key: CardSizeKey.self, value: geometry.size) })
         .onPreferenceChange(CardSizeKey.self) { size in
-            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.resizeCard(size) }
+            guard size.width >= 300, size.height >= 200 else { return }
+            DispatchQueue.main.async {
+                if usesHorizontalLayout {
+                    if abs(horizontalContentHeight - size.height) > 1 { horizontalContentHeight = size.height }
+                } else {
+                    if abs(verticalContentHeight - size.height) > 1 { verticalContentHeight = size.height }
+                }
+                if store.manualCardSize == nil { (NSApp.delegate as? AppDelegate)?.resizeCard(size) }
+            }
         }
         .onAppear {
-            (NSApp.delegate as? AppDelegate)?.resizeCardWidth(usesHorizontalLayout ? 680 : 356)
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.resizeCardToFit() }
         }
         .onChange(of: cardLayout) {
-            (NSApp.delegate as? AppDelegate)?.resizeCardWidth(usesHorizontalLayout ? 680 : 356)
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.resizeCardToFit() }
+        }
+        .onChange(of: appearance) {
+            DispatchQueue.main.async { (NSApp.delegate as? AppDelegate)?.resizeCardToFit() }
         }
         .onChange(of: customThemeRevision) { customThemeImage = CustomThemeImageStore.load() }
         .background(cardSurface)
         .clipShape(RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke((theme == .academy || theme == .custom) ? themeAccent.opacity(0.42) : (usesLightPalette ? Color.black.opacity(0.09) : Color.white.opacity(0.10)), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke((theme == .academy || theme == .orbit || theme == .comic || theme == .custom) ? themeAccent.opacity(0.42) : (usesLightPalette ? Color.black.opacity(0.09) : Color.white.opacity(0.10)), lineWidth: 1))
         .preferredColorScheme(forcedColorScheme)
         .sheet(isPresented: $store.showSettings) { SettingsView(store: store) }
+    }
+
+    var body: some View {
+        ZStack {
+            if let manualSize = store.manualCardSize, !store.preview {
+                ZStack(alignment: .topLeading) {
+                    let designWidth: CGFloat = usesHorizontalLayout ? 680 : 356
+                    let designHeight = usesHorizontalLayout ? horizontalContentHeight : verticalContentHeight
+                    let scale = max(0.01, min(manualSize.width / designWidth, manualSize.height / designHeight))
+                    cardSurface
+                    cardContents
+                        .fixedSize()
+                        .scaleEffect(scale, anchor: .topLeading)
+                        .frame(width: 0, height: 0, alignment: .topLeading)
+                        .offset(x: (manualSize.width - designWidth * scale) / 2,
+                                y: (manualSize.height - designHeight * scale) / 2)
+                }
+                .frame(width: manualSize.width, height: manualSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 24))
+                .overlay(RoundedRectangle(cornerRadius: 24).stroke(themeAccent.opacity(0.38), lineWidth: 1))
+            } else {
+                cardContents
+            }
+        }
+        .overlay { if !store.preview { resizeHandles } }
+    }
+
+    private var resizeHandles: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let height = geometry.size.height
+            ZStack {
+                resizeGrip(.top, width: max(0, width - 42), height: 10).position(x: width / 2, y: 5)
+                resizeGrip(.bottom, width: max(0, width - 42), height: 10).position(x: width / 2, y: height - 5)
+                resizeGrip(.left, width: 10, height: max(0, height - 42)).position(x: 5, y: height / 2)
+                resizeGrip(.right, width: 10, height: max(0, height - 42)).position(x: width - 5, y: height / 2)
+                resizeGrip(.topLeft, width: 21, height: 21).position(x: 10.5, y: 10.5)
+                resizeGrip(.topRight, width: 21, height: 21).position(x: width - 10.5, y: 10.5)
+                resizeGrip(.bottomLeft, width: 21, height: 21).position(x: 10.5, y: height - 10.5)
+                resizeGrip(.bottomRight, width: 21, height: 21).position(x: width - 10.5, y: height - 10.5)
+            }
+        }
+    }
+
+    private func resizeGrip(_ edge: CardResizeEdge, width: CGFloat, height: CGFloat) -> some View {
+        Rectangle().fill(Color.clear)
+            .frame(width: width, height: height)
+            .contentShape(Rectangle())
+            .overlay {
+                if edge.left || edge.right {
+                    if edge.top || edge.bottom {
+                        Circle().fill(themeAccent.opacity(0.72)).frame(width: 5, height: 5)
+                    } else {
+                        Capsule().fill(themeAccent.opacity(0.58)).frame(width: 2, height: 18)
+                    }
+                } else {
+                    Capsule().fill(themeAccent.opacity(0.58)).frame(width: 18, height: 2)
+                }
+            }
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    (NSApp.delegate as? AppDelegate)?.updateManualResize(edge: edge, translation: value.translation)
+                }
+                .onEnded { _ in (NSApp.delegate as? AppDelegate)?.endManualResize() })
+            .help(t("拖动边缘调整卡片大小", "Drag to resize the card"))
+    }
+    private var comicRed: Color { Color(red: 0.96, green: 0.19, blue: 0.27) }
+    private var comicBlue: Color { Color(red: 0.24, green: 0.48, blue: 1.0) }
+    private var comicGold: Color { Color(red: 1.0, green: 0.81, blue: 0.35) }
+
+    private func comicProvider(_ name: String, symbol: String, snapshot: QuotaSnapshot?, error: String?, busy: Bool, accent: Color) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 25, height: 25)
+                    .background(accent, in: RoundedRectangle(cornerRadius: 5))
+                Text(name).font(.system(size: 16, weight: .heavy, design: .rounded))
+                Spacer(minLength: 4)
+                if busy { ProgressView().controlSize(.mini) }
+                else if error != nil {
+                    Text(snapshot == nil ? t("待连接", "Not connected") : t("更新失败", "Update failed"))
+                        .foregroundStyle(comicGold).font(.system(size: 9, weight: .bold))
+                } else if let date = snapshot?.fetchedAt {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(age(date, now: context.date)).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Rectangle().fill(accent).frame(height: 3)
+            if let snapshot {
+                comicQuotaRow(t("五小时", "FIVE HOURS"), window: snapshot.fiveHour, accent: accent)
+                comicQuotaRow(t("本周", "THIS WEEK"), window: snapshot.weekly, accent: accent)
+                if error != nil {
+                    Text(t("上次成功数据 · 请刷新", "Last successful data · Refresh to retry"))
+                        .font(.system(size: 9)).foregroundStyle(comicGold)
+                }
+            } else {
+                Spacer(minLength: 2)
+                HStack(spacing: 9) {
+                    Image(systemName: busy ? "arrow.triangle.2.circlepath" : "bolt.slash.fill")
+                        .font(.system(size: 23, weight: .bold)).foregroundStyle(accent)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(busy ? t("正在读取额度", "Loading quota") : name == "Claude" ? t("尚未连接 Claude", "Claude not connected") : t("暂无额度数据", "Quota unavailable"))
+                            .font(.system(size: 11, weight: .bold))
+                        Text(busy ? t("请稍候…", "Please wait…") : t("连接后显示额度和重置时间", "Connect to show quota and reset times"))
+                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: 2)
+            }
+            Spacer(minLength: 0)
+            if name == "Claude" {
+                Button { store.web.showLogin() } label: {
+                    HStack {
+                        Text(snapshot == nil ? t("连接 Claude", "Connect Claude") : t("打开 Claude 账号", "Open Claude account"))
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(.system(size: 10, weight: .bold)).foregroundStyle(comicGold)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: usesHorizontalLayout || name == "Claude" ? 260 : 220, alignment: .topLeading)
+        .background(ComicPanelShape().fill(LinearGradient(colors: [accent.opacity(0.20), Color(red: 0.045, green: 0.07, blue: 0.15)], startPoint: .topLeading, endPoint: .bottomTrailing)))
+        .overlay(ComicPanelShape().stroke(accent.opacity(0.78), lineWidth: 1.2))
+    }
+
+    private func comicQuotaRow(_ label: String, window: QuotaWindow?, accent: Color) -> some View {
+        let color = (window?.used ?? 0) >= 90 ? comicGold : accent
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(label).font(.system(size: 9, weight: .heavy, design: .rounded)).foregroundStyle(comicGold)
+                Spacer()
+                Text(window.map { t("已用 \(Int($0.used.rounded()))%", "\(Int($0.used.rounded()))% USED") } ?? "—")
+                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(window.map { "\(Int($0.remaining.rounded()))%" } ?? "—")
+                    .font(.system(size: 27, weight: .black, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(window == nil ? Color.secondary : color)
+                Text(t("剩余", "LEFT")).font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                Spacer(minLength: 2)
+                Text(comicResetPoint(window?.reset)).font(.system(size: 9, weight: .medium)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            GeometryReader { geometry in
+                Rectangle().fill(Color.white.opacity(0.12))
+                Rectangle().fill(color)
+                    .frame(width: geometry.size.width * CGFloat(min(100, max(0, window?.used ?? 0)) / 100))
+            }
+            .frame(height: 5)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    private func comicResetPoint(_ date: Date?) -> String {
+        guard let date else { return t("重置时间未知", "Reset unknown") }
+        guard date > Date() else { return t("待同步", "Waiting to sync") }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: displayLanguage == AppLanguage.english.rawValue ? "en_US" : "zh_CN")
+        formatter.dateFormat = displayLanguage == AppLanguage.english.rawValue ? "MMM d, HH:mm" : "M月d日 HH:mm"
+        return formatter.string(from: date)
+    }
+    private var orbitGold: Color { Color(red: 0.94, green: 0.74, blue: 0.43) }
+    private var orbitCyan: Color { Color(red: 0.28, green: 0.80, blue: 0.89) }
+    private func orbitColor(_ window: QuotaWindow?, fallback: Color) -> Color {
+        (window?.used ?? 0) >= 90 ? .red : fallback
+    }
+
+    private func orbitProvider(_ name: String, symbol: String, snapshot: QuotaSnapshot?, error: String?, busy: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol).foregroundStyle(name == "Claude" ? Color.orange : orbitGold)
+                Text(name).font(.system(size: 15, weight: .semibold, design: .rounded))
+                Spacer(minLength: 4)
+                if busy { ProgressView().controlSize(.mini) }
+                else if error != nil { Text(snapshot == nil ? t("待连接", "Not connected") : t("更新失败", "Update failed")).foregroundStyle(orbitGold).font(.system(size: 10)) }
+                else if let date = snapshot?.fetchedAt {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(age(date, now: context.date)).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let snapshot {
+                orbitGauge(fiveHour: snapshot.fiveHour, weekly: snapshot.weekly, size: 104)
+                    .frame(maxWidth: .infinity)
+                HStack(spacing: 12) {
+                    Label(t("五小时", "Five hours"), systemImage: "circle.fill").foregroundStyle(orbitColor(snapshot.fiveHour, fallback: orbitGold))
+                    Label(t("本周", "This week"), systemImage: "circle.fill").foregroundStyle(orbitColor(snapshot.weekly, fallback: orbitCyan))
+                }
+                .font(.system(size: 9, weight: .medium))
+                .frame(maxWidth: .infinity)
+                orbitDataRow(t("五小时", "Five hours"), window: snapshot.fiveHour, color: orbitColor(snapshot.fiveHour, fallback: orbitGold))
+                orbitDataRow(t("本周", "This week"), window: snapshot.weekly, color: orbitColor(snapshot.weekly, fallback: orbitCyan))
+                if error != nil {
+                    Text(t("上次成功数据 · 请刷新", "Last successful data · Refresh to retry"))
+                        .font(.system(size: 9)).foregroundStyle(orbitGold)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    orbitGauge(fiveHour: nil, weekly: nil, size: 100)
+                    Text(busy ? t("正在读取额度…", "Loading quota…") : name == "Claude" ? t("连接后显示额度与重置时间", "Connect to show quota and reset times") : t("暂无额度数据，请检查连接", "Quota unavailable. Check connection."))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 150)
+            }
+            if name == "Claude" {
+                Button { store.web.showLogin() } label: {
+                    HStack {
+                        Text(snapshot == nil ? t("连接 Claude", "Connect Claude") : t("打开 Claude 账号", "Open Claude account"))
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                    }
+                    .font(.system(size: 10, weight: .medium)).foregroundStyle(orbitGold)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(height: 274, alignment: .topLeading)
+        .background(providerSurface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(orbitGold.opacity(0.25), lineWidth: 1))
+    }
+
+    private func orbitGauge(fiveHour: QuotaWindow?, weekly: QuotaWindow?, size: CGFloat) -> some View {
+        ZStack {
+            Circle().stroke(orbitGold.opacity(0.16), lineWidth: 1).padding(-8)
+            Circle().stroke(orbitCyan.opacity(0.14), lineWidth: 1).padding(-3)
+            Circle().stroke(orbitCyan.opacity(0.13), lineWidth: 8)
+            if let weekly {
+                Circle().trim(from: 0, to: CGFloat(min(100, weekly.remaining) / 100))
+                    .stroke(orbitColor(weekly, fallback: orbitCyan), style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .shadow(color: orbitCyan.opacity(0.45), radius: 6)
+            }
+            Circle().stroke(orbitGold.opacity(0.13), lineWidth: 7).padding(16)
+            if let fiveHour {
+                Circle().trim(from: 0, to: CGFloat(min(100, fiveHour.remaining) / 100))
+                    .stroke(orbitColor(fiveHour, fallback: orbitGold), style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .padding(16)
+                    .shadow(color: orbitGold.opacity(0.4), radius: 5)
+            }
+            VStack(spacing: 0) {
+                Text(t("五小时剩余", "5h left")).font(.system(size: 8)).foregroundStyle(.secondary)
+                Text(fiveHour.map { "\(Int($0.remaining.rounded()))%" } ?? "—")
+                    .font(.system(size: size < 120 ? 25 : 29, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(fiveHour == nil ? Color.secondary : orbitColor(fiveHour, fallback: orbitGold))
+                    .minimumScaleFactor(0.75)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(t("五小时剩余 \(fiveHour.map { "\(Int($0.remaining.rounded()))%" } ?? "未知")，本周剩余 \(weekly.map { "\(Int($0.remaining.rounded()))%" } ?? "未知")", "Five hours remaining \(fiveHour.map { "\(Int($0.remaining.rounded()))%" } ?? "unknown"), weekly remaining \(weekly.map { "\(Int($0.remaining.rounded()))%" } ?? "unknown")"))
+    }
+
+    private func orbitDataRow(_ label: String, window: QuotaWindow?, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(label).foregroundStyle(.primary)
+                Spacer(minLength: 4)
+                Text(window.map { t("已用 \(Int($0.used.rounded()))%", "\(Int($0.used.rounded()))% used") } ?? "—")
+                    .foregroundStyle(color).monospacedDigit()
+            }
+            .font(.system(size: 10, weight: .medium))
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(resetLabel(window?.reset, now: context.date, isWeekly: true))
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+        }
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.23), in: RoundedRectangle(cornerRadius: 9))
     }
     func provider(_ name: String, symbol: String, tint: Color, snapshot: QuotaSnapshot?, error: String?, busy: Bool) -> some View {
         VStack(alignment: .leading, spacing: 15) {
@@ -506,7 +907,7 @@ struct SettingsView: View {
         switch theme {
         case .system: systemColorScheme == .light
         case .light, .ocean: true
-        case .dark, .sunset, .academy, .custom: false
+        case .dark, .sunset, .academy, .orbit, .comic, .custom: false
         }
     }
 
@@ -514,7 +915,7 @@ struct SettingsView: View {
         switch theme {
         case .system: nil
         case .light, .ocean: .light
-        case .dark, .sunset, .academy, .custom: .dark
+        case .dark, .sunset, .academy, .orbit, .comic, .custom: .dark
         }
     }
 
@@ -523,7 +924,8 @@ struct SettingsView: View {
         case .system, .light, .dark: .mint
         case .ocean: Color(red: 0.04, green: 0.52, blue: 0.78)
         case .sunset: Color(red: 1.0, green: 0.50, blue: 0.40)
-        case .academy, .custom: Color(red: 0.95, green: 0.72, blue: 0.34)
+        case .academy, .orbit, .custom: Color(red: 0.95, green: 0.72, blue: 0.34)
+        case .comic: Color(red: 0.96, green: 0.19, blue: 0.27)
         }
     }
 
@@ -552,6 +954,10 @@ struct SettingsView: View {
                     LinearGradient(colors: [settingsAccent.opacity(0.12), .clear], startPoint: .topLeading, endPoint: .center)
                 }
             }
+        case .orbit:
+            LinearGradient(colors: [Color(red: 0.035, green: 0.09, blue: 0.20), Color(red: 0.015, green: 0.035, blue: 0.085)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        case .comic:
+            LinearGradient(colors: [Color(red: 0.15, green: 0.045, blue: 0.10), Color(red: 0.04, green: 0.07, blue: 0.16)], startPoint: .topLeading, endPoint: .bottomTrailing)
         default:
             LinearGradient(colors: [Color(red: 0.105, green: 0.125, blue: 0.145), Color(red: 0.045, green: 0.055, blue: 0.065)], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
@@ -559,7 +965,7 @@ struct SettingsView: View {
 
     private var sectionSurface: Color {
         if usesLightPalette { return Color.white.opacity(theme == .ocean ? 0.58 : 0.72) }
-        return theme == .academy || theme == .custom ? Color(red: 0.035, green: 0.075, blue: 0.17).opacity(0.72) : Color.white.opacity(0.055)
+        return theme == .academy || theme == .orbit || theme == .comic || theme == .custom ? Color(red: 0.035, green: 0.075, blue: 0.17).opacity(0.72) : Color.white.opacity(0.055)
     }
 
     var body: some View {
@@ -574,11 +980,25 @@ struct SettingsView: View {
                 store.publishWidget()
                 (NSApp.delegate as? AppDelegate)?.rebuildMenu()
             }
-            Picker(t("布局方向", "Layout"), selection: $cardLayout) {
+            Picker(store.manualCardSize == nil ? t("布局方向", "Layout") : t("预设布局方向", "Preset Layout"), selection: $cardLayout) {
                 Label(t("竖版", "Vertical"), systemImage: "rectangle.portrait").tag(CardLayout.vertical.rawValue)
                 Label(t("横版", "Horizontal"), systemImage: "rectangle.split.2x1").tag(CardLayout.horizontal.rawValue)
             }
             .pickerStyle(.segmented)
+            .onChange(of: cardLayout) { (NSApp.delegate as? AppDelegate)?.resetManualCardSize() }
+            Text(t("拖动卡片的四角或边缘可调整大小；自定义尺寸会自动选择横版或竖版。", "Drag any corner or edge to resize; custom sizes choose a horizontal or vertical layout automatically."))
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let size = store.manualCardSize {
+                HStack {
+                    Text(t("自定义尺寸 \(Int(size.width)) × \(Int(size.height)) · 拖动边框可调整，自动适配横竖排列", "Custom size \(Int(size.width)) × \(Int(size.height)) · Drag an edge to resize; layout adapts automatically"))
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button(t("恢复预设", "Reset Size")) { (NSApp.delegate as? AppDelegate)?.resetManualCardSize() }
+                        .font(.system(size: 10))
+                }
+            }
             VStack(alignment: .leading, spacing: 9) {
                 Text(t("主题风格", "Theme")).font(.caption).foregroundStyle(.secondary)
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
@@ -736,6 +1156,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
     var status: NSStatusItem!
     var store: Store!
+    private var resizeStartFrame: NSRect?
+    private var resizeStartEdge: CardResizeEdge?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         store = Store()
@@ -750,6 +1172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !panel.setFrameUsingName("AIQuotaCardPosition"), let screen = NSScreen.main {
             panel.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.maxX - 380, y: screen.visibleFrame.maxY - 30))
         }
+        panel.setFrame(fitToVisibleFrame(panel.frame), display: false)
+        resizeCardToFit()
         updateLevel()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         status.button?.image = NSImage(systemSymbolName: "chart.bar.xaxis", accessibilityDescription: "AI 额度")
@@ -773,16 +1197,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless(); NSApp.activate(ignoringOtherApps: true)
     }
     func resizeCard(_ size: CGSize) {
-        guard let panel, size.width > 0, size.height > 0 else { return }
+        guard let panel, store.manualCardSize == nil, size.width > 0, size.height > 0 else { return }
         let old = panel.frame
-        if abs(old.width - size.width) > 1 || abs(old.height - size.height) > 1 {
-            panel.setFrame(NSRect(x: old.maxX - size.width, y: old.maxY - size.height, width: size.width, height: size.height), display: true, animate: true)
+        let target = fitToVisibleFrame(NSRect(x: old.maxX - size.width, y: old.maxY - size.height, width: size.width, height: size.height))
+        if abs(old.width - target.width) > 1 || abs(old.height - target.height) > 1 ||
+            abs(old.minX - target.minX) > 1 || abs(old.minY - target.minY) > 1 {
+            panel.setFrame(target, display: true)
         }
+    }
+    func resizeCardToFit() {
+        guard resizeStartFrame == nil, let host = panel?.contentView as? NSHostingView<CardView> else { return }
+        host.layoutSubtreeIfNeeded()
+        if let size = store.manualCardSize {
+            let old = panel.frame
+            panel.setFrame(fitToVisibleFrame(NSRect(x: old.maxX - size.width, y: old.maxY - size.height, width: size.width, height: size.height)), display: true)
+            return
+        }
+        resizeCard(host.fittingSize)
+    }
+    func updateManualResize(edge: CardResizeEdge, translation: CGSize) {
+        guard let panel else { return }
+        if resizeStartFrame == nil || resizeStartEdge != edge {
+            resizeStartFrame = panel.frame
+            resizeStartEdge = edge
+            store.resizeLayoutLock = store.manualCardSize.map { CardLayout.prefersHorizontal(size: $0) }
+                ?? (UserDefaults.standard.string(forKey: "cardLayout") == CardLayout.horizontal.rawValue)
+        }
+        guard let start = resizeStartFrame else { return }
+        let visible = (NSScreen.screens.first { $0.frame.intersects(start) } ?? NSScreen.main)?.visibleFrame ?? start
+        let width = min(max(edge.left ? start.width - translation.width : edge.right ? start.width + translation.width : start.width, 300), max(300, visible.width - 12))
+        let height = min(max(edge.top ? start.height - translation.height : edge.bottom ? start.height + translation.height : start.height, 420), max(420, visible.height - 12))
+        let x = edge.left ? start.maxX - width : start.minX
+        let y = edge.bottom ? start.maxY - height : start.minY
+        let target = fitToVisibleFrame(NSRect(x: x, y: y, width: width, height: height))
+        panel.setFrame(target, display: true)
+        store.manualCardSize = target.size
+    }
+    func endManualResize() {
+        guard resizeStartFrame != nil, let size = store.manualCardSize else { return }
+        resizeStartFrame = nil
+        resizeStartEdge = nil
+        UserDefaults.standard.set(Double(size.width), forKey: "manualCardWidth")
+        UserDefaults.standard.set(Double(size.height), forKey: "manualCardHeight")
+        store.resizeLayoutLock = nil
+    }
+    func resetManualCardSize() {
+        resizeStartFrame = nil
+        resizeStartEdge = nil
+        store.resizeLayoutLock = nil
+        store.manualCardSize = nil
+        UserDefaults.standard.removeObject(forKey: "manualCardWidth")
+        UserDefaults.standard.removeObject(forKey: "manualCardHeight")
+        DispatchQueue.main.async { self.resizeCardToFit() }
     }
     func resizeCardWidth(_ width: CGFloat) {
         guard let panel, width > 0, abs(panel.frame.width - width) > 1 else { return }
         let old = panel.frame
-        panel.setFrame(NSRect(x: old.maxX - width, y: old.minY, width: width, height: old.height), display: true, animate: true)
+        let target = NSRect(x: old.maxX - width, y: old.minY, width: width, height: old.height)
+        panel.setFrame(fitToVisibleFrame(target), display: true)
+    }
+    private func fitToVisibleFrame(_ rect: NSRect) -> NSRect {
+        guard let visible = (NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main)?.visibleFrame else { return rect }
+        return NSRect(
+            x: min(max(rect.minX, visible.minX), max(visible.minX, visible.maxX - rect.width)),
+            y: min(max(rect.minY, visible.minY), max(visible.minY, visible.maxY - rect.height)),
+            width: rect.width,
+            height: rect.height
+        )
     }
     func updateLevel() { panel.level = (UserDefaults.standard.object(forKey: "onTop") as? Bool ?? true) ? .floating : .normal }
     func rebuildMenu() {

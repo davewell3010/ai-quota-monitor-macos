@@ -8,7 +8,8 @@ A native SwiftUI/AppKit menu-bar card and WidgetKit extension for viewing Codex 
 
 - Codex and Claude five-hour and weekly subscription usage.
 - Floating card, menu-bar controls, and small/medium/large macOS widgets.
-- Built-in themes and local custom background images.
+- Resize the floating card by dragging any edge or corner. Its content and text scale with the available space, and the layout automatically switches between stacked and side-by-side based on the available size. The chosen size is saved locally; Settings can restore the preset size.
+- Built-in themes (including dual-ring Star Orbit and original Hero Comic) and local custom background images. Both themes support vertical and horizontal card layouts.
 - Simplified Chinese and English display languages.
 - Codex executable auto-detection, program selection, path paste/copy, and browser sign-in through the official Codex CLI.
 - Configurable refresh interval, always-on-top mode, and launch at login.
@@ -99,5 +100,9 @@ Released under the [MIT License](LICENSE). Product names and trademarks belong t
 ## 中文简介
 
 AI Quota Monitor 是原生 macOS 悬浮卡片和桌面小组件，用于查看 Codex 与 Claude 官方订阅的五小时、周额度使用率、剩余比例和重置时间。支持多主题、自定义背景、简体中文/英文切换和菜单栏运行。
+
+“星轨仪表”是悬浮卡片的可选主题：内侧金色圆环表示五小时剩余额度，外侧青色圆环表示本周剩余额度，支持横版与竖版。桌面小组件外观暂不随此主题切换。
+
+“英雄漫画”是原创的超级英雄漫画风悬浮卡片主题，以红蓝分区、斜切面板和网点纹理显示真实额度与具体重置时间；不包含任何影视角色或品牌标志。桌面小组件外观仍独立。
 
 本项目不提供 token 精确统计，不上传账号凭据，也不要求手工填写 API Key。Claude 数据依赖其网页接口，网页变化时可能需要更新适配。

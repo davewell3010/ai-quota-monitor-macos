@@ -2,7 +2,8 @@
 # Build a separate WidgetKit edition. Leaves build/AI额度.app untouched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-APP="$PWD/build/widget/AI额度.app"
+BUILD_ROOT="${AI_QUOTA_BUILD_ROOT:-$PWD/build/widget}"
+APP="$BUILD_ROOT/AI额度.app"
 EXT="$APP/Contents/PlugIns/AIQuotaWidget.appex"
 APP_BUNDLE_ID="${APP_BUNDLE_ID:-io.github.aiquota.monitor}"
 WIDGET_BUNDLE_ID="${WIDGET_BUNDLE_ID:-$APP_BUNDLE_ID.widget}"
@@ -21,8 +22,8 @@ if [[ "$APP_GROUP_ID" != "$APP_TEAM_ID."* ]]; then
   echo "macOS 共享组必须以当前签名团队 ID 开头。" >&2
   exit 1
 fi
-export APP_GROUP_ID APP_TEAM_ID APP_BUNDLE_ID WIDGET_BUNDLE_ID
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$EXT/Contents/MacOS" build/module-cache
+export APP APP_GROUP_ID APP_TEAM_ID APP_BUNDLE_ID WIDGET_BUNDLE_ID
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$EXT/Contents/MacOS" build/module-cache "$BUILD_ROOT"
 xcrun swiftc -target "$(uname -m)-apple-macos14.0" -swift-version 5 -O -D WIDGET_SUPPORT -module-cache-path "$PWD/build/module-cache" -framework AppKit -framework SwiftUI -framework WebKit -framework WidgetKit -framework ServiceManagement Sources/*.swift Shared/*.swift -o "$APP/Contents/MacOS/AIQuota"
 if [[ -d "$PWD/Resources" ]]; then
   /usr/bin/ditto "$PWD/Resources" "$APP/Contents/Resources"
@@ -31,23 +32,23 @@ fi
 DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
   /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild \
   -project WidgetExtension/AIQuotaWidget.xcodeproj -scheme AIQuotaWidget \
-  -configuration Release -derivedDataPath build/widget-derived \
+  -configuration Release -derivedDataPath "$BUILD_ROOT/widget-derived" \
   CODE_SIGNING_ALLOWED=NO "AI_QUOTA_APP_GROUP=$APP_GROUP_ID" \
-  "PRODUCT_BUNDLE_IDENTIFIER=$WIDGET_BUNDLE_ID" build > build/widget-xcode.log 2>&1
+  "PRODUCT_BUNDLE_IDENTIFIER=$WIDGET_BUNDLE_ID" build > "$BUILD_ROOT/widget-xcode.log" 2>&1
 # Replace only generated extension artifacts, not user data.
-/usr/bin/ditto build/widget-derived/Build/Products/Release/AIQuotaWidget.appex "$EXT"
+/usr/bin/ditto "$BUILD_ROOT/widget-derived/Build/Products/Release/AIQuotaWidget.appex" "$EXT"
 python3 - <<'PY'
 import os,plistlib,pathlib
-app=pathlib.Path('build/widget/AI额度.app/Contents')
+app=pathlib.Path(os.environ['APP'])/'Contents'
 group=os.environ['APP_GROUP_ID']
 base=dict(CFBundleShortVersionString='1.1.2',CFBundleVersion='5',LSMinimumSystemVersion='14.0',AIQuotaAppGroup=group)
 main=dict(base,CFBundleExecutable='AIQuota',CFBundleIdentifier=os.environ['APP_BUNDLE_ID'],CFBundleName='AI额度',CFBundleDisplayName='AI额度',CFBundleIconFile='AppIcon',CFBundlePackageType='APPL',LSUIElement=True,NSHighResolutionCapable=True,CFBundleURLTypes=[dict(CFBundleURLName='AIQuota',CFBundleURLSchemes=['aiquota'])])
 
-for path,value in [(app/'Info.plist',main),(pathlib.Path('build/widget/host.entitlements'),{'com.apple.security.application-groups':[group]}),(pathlib.Path('build/widget/widget.entitlements'),{'com.apple.security.app-sandbox':True,'com.apple.security.application-groups':[group]})]:
+for path,value in [(app/'Info.plist',main),(pathlib.Path(os.environ['APP']).parent/'host.entitlements',{'com.apple.security.application-groups':[group]}),(pathlib.Path(os.environ['APP']).parent/'widget.entitlements',{'com.apple.security.app-sandbox':True,'com.apple.security.application-groups':[group]})]:
  path.write_bytes(plistlib.dumps(value))
 PY
-codesign --force --sign "$SIGNING_IDENTITY" --entitlements build/widget/widget.entitlements "$EXT"
-codesign --force --sign "$SIGNING_IDENTITY" --entitlements build/widget/host.entitlements "$APP"
+codesign --force --sign "$SIGNING_IDENTITY" --entitlements "$BUILD_ROOT/widget.entitlements" "$EXT"
+codesign --force --sign "$SIGNING_IDENTITY" --entitlements "$BUILD_ROOT/host.entitlements" "$APP"
 codesign --verify --deep --strict "$APP"
 ./scripts/verify-widget.sh
 echo "$APP"
